@@ -1,0 +1,92 @@
+checkin() {
+echo "Enter your username"
+read user
+validate_user $user
+echo "Enter the Server IP you want to release"
+read ip
+if [ `cat $file | grep $ip | wc -l` -eq 0 ]
+then
+        echo "The IP $ip which the user $user wants to release is not present in the given inventory list"
+        exit 1
+fi
+user_in_csv=`cat vm_list.csv | grep "$ip" | cut -d, -f3`
+if [ $user_in_csv == $user ] && [ ! -z $user_in_csv ]
+then
+	sed -i "/$ip/ s/$user/Not_allocated/g" $file
+	if [ `cat $file | grep -i $ip | cut -d, -f3` == 'Not_allocated' ]
+	then
+         echo "The server $ip has been successfully checked in by the user $user"
+        else
+	 echo "The server $ip could not be released by the user $user"
+	 exit 1
+	fi
+
+else
+	echo "The IP $ip is owned by some other user $user_in_csv"
+	exit 1
+fi
+
+echo "Doing cleanup on the server IP $ip"
+ssh $ip "rm -rf /tmp/*"
+}
+checkout() {
+echo "Enter your username"
+read user
+ip=`awk -F, '$3 == "Not_allocated"' $file | head -1 | cut -d, -f1`
+if [ ! -z $ip ]
+then
+echo "The server $ip is allocated to you"
+sed -i "/$ip/ s/Not_allocated/$user/g" vm_list.csv
+else
+echo 'no server is available to allocate , please try after sometime'
+fi
+
+}
+validate_user() {
+if [ `cat $file | grep $1 | wc -l` -eq 0 ]
+then
+        echo "The User $user is not owning any server in the given inventory list"
+        exit 1
+fi
+}
+prepare_inventory() {
+if [ -f $file ]
+then
+	echo "The file $file is present"
+else
+	echo "The file $file is not present"
+	touch $file
+fi
+if [ `cat $file | wc -l` -eq 0 ]
+then
+echo "Creating the column names as it's not present in the CSV"
+echo "IP,Status,Current_owner" > $file
+fi
+ip_addresses=`aws ec2 describe-instances --region us-east-1 --output text  --filters Name=instance-state-name,Values=running | grep -i private | awk ' { print $NF }`
+for ip_addr in `echo $ip_addresses`
+do
+	if [ `cat $file | grep $ip_addr | wc -l` -eq 0 ]
+	then
+	echo "ip_addr,'running','Not_allocated' >> $file"
+	fi
+done
+
+}
+
+commit_inventory_git() {
+if [ `git status | grep -i modified | grep $file | wc -l` -eq 1 ]
+then
+echo "The file $file is modified so pushiing it to the git"
+git add .
+git commit -m "Adding the new updates to the server inventory"
+git push origin master
+fi
+}
+export file='vm_list.csv'
+echo "preparing the inventory"
+#git clone <repo>
+#prepare_inventory
+echo "Enter the method you want to use checkout or checkin"
+read func
+eval $func
+#commit_inventory_git
